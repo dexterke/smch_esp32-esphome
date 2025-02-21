@@ -1,0 +1,1450 @@
+# ~ dexterke@secretlab © 2022-2025
+
+substitutions:
+  esphome_name: esp32dev
+
+  ## Zone names
+  # xiaomi_bt_1_name: Living Room
+  xiaomi_bt_2_name: Kitchen
+  xiaomi_bt_3_name: Entry Hall
+  # xiaomi_bt_4_name: 1st Floor
+  # xiaomi_bt_5_name: Backyard
+
+  ## Thermostat sensors
+  ths0_sensor: dallas_1wire
+  # ths0_sensor: xiaomi_bt_1_temperature
+  ths1_sensor: xiaomi_bt_2_temperature
+  ths2_sensor: xiaomi_bt_3_temperature
+  
+  dallas_1wire_sensor: !secret esp32dev_dallas_1wire_sensor
+  xiaomi_bt_1_mac_address: !secret esp32dev_xiaomi_bt_1_mac
+  xiaomi_bt_2_mac_address: !secret esp32dev_xiaomi_bt_2_mac
+  xiaomi_bt_3_mac_address: !secret esp32dev_xiaomi_bt_3_mac
+
+  ## Thermostat names
+  ths0_name: "Test Lab"
+  # ths0_name: ${xiaomi_bt_1_name}
+  ths1_name: ${xiaomi_bt_2_name}
+  ths2_name: ${xiaomi_bt_3_name}
+
+  ## Hardcoded IP config 
+  ip_address: 10.0.4.42 # esp32dev
+
+  ip_gateway: 10.0.4.1
+  ip_subnet: 255.255.255.0
+  ip_dns1: 10.0.4.1
+  ip_sntp: 10.0.4.1
+  # ip_sntp: 0.ie.pool.ntp.org
+
+  ## GPIO pins
+  gpio_dallas: GPIO21
+  gpio_i2c_sda: GPIO23
+  gpio_i2c_scl: GPIO22
+  gpio_relay_ch: GPIO4
+  gpio_led: GPIO2
+  gpio_lcd_blight: GPIO18
+  gpio_rotary_a: GPIO16
+  gpio_rotary_b: GPIO17
+  gpio_push_sw1: GPIO5
+
+  max_temperature: "26.0"
+  min_temperature: "10.0"
+  temperature_step: "0.10"
+  temperature_hysteresis: "0.40"
+  preset_away_target_temperature: "15.0"
+  preset_sleep_target_temperature: "19.0"
+  preset_activity_target_temperature: "19.5"
+  preset_eco_target_temperature: "20.0"
+  preset_home_target_temperature: "20.5"
+  preset_comfort_target_temperature: "21.0"
+  preset_cozy_target_temperature: "21.5"
+  preset_warm_target_temperature: "22.0"
+
+
+globals: ## Global variables
+  - id: after_boot
+    restore_value: no
+    initial_value: 'false'
+    type: bool
+
+  - id: mode_menu
+    restore_value: no
+    initial_value: 'false'
+    type: bool
+
+  - id: mode_timer
+    restore_value: no
+    initial_value: 'false'
+    type: bool
+
+  - id: loop_cnt
+    restore_value: no
+    initial_value: '0'
+    type: int
+
+  - id: loop_cnt_max
+    restore_value: no
+    initial_value: '8'
+    type: int
+
+  - id: loop_cnt_cue
+    restore_value: no
+    initial_value: '6'
+    type: int
+
+  - id: timer_timestamp
+    restore_value: no
+    initial_value: '0'
+    type: time_t
+
+  - id: menu_timeout
+    restore_value: no
+    initial_value: '0'
+    type: int
+
+  - id: ths_names
+    type: String[3]
+    restore_value: no
+    initial_value: '{"${ths0_name}", "${ths1_name}", "${ths2_name}"}'
+
+  - id: lcd_ilum
+    restore_value: yes
+    initial_value: '75'
+    type: int
+
+  - id: cached_ths0_temp
+    type: float
+    restore_value: no
+    initial_value: '30.0'
+
+  - id: cached_ths1_temp
+    type: float
+    restore_value: no
+    initial_value: '31.0'
+
+  - id: cached_ths2_temp
+    type: float
+    restore_value: no
+    initial_value: '32.0'
+ 
+  - id: cached_ths0_target
+    type: float
+    restore_value: no
+    initial_value: ${preset_away_target_temperature}
+
+  - id: cached_ths1_target
+    type: float
+    restore_value: no
+    initial_value: ${preset_away_target_temperature}
+
+  - id: cached_ths2_target
+    type: float
+    restore_value: no
+    initial_value: ${preset_away_target_temperature}
+
+  - id: cached_ths0_action
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: cached_ths1_action
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: cached_ths2_action
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+
+esphome:
+  name: ${esphome_name}
+  platform: ESP32
+  board: esp32dev
+  platformio_options:
+    build_flags: 
+      - '-D CONFIG_ESP_TASK_WDT_TIMEOUT_S=10'
+
+  on_boot:
+    priority: -100.0
+    then:
+      - switch.turn_off: relay_switch
+      - delay: 5s
+      - lambda: |-
+          id(push_sw1).publish_state(false); 
+          id(ch_timer_switch).turn_off();
+          id(display_backlight).turn_on();
+          id(lcd_blight).set_level(id(lcd_ilum) / 100.0);
+          ESP_LOGI("main", "---PROGRAM START---");
+          id(after_boot) = true;
+
+  on_shutdown:
+    then:
+      - switch.turn_off: relay_switch
+
+
+# on_loop:
+#   then:
+
+
+# debug:
+#   update_interval: 5s
+
+
+logger:
+  # level: DEBUG
+  # level: VERBOSE
+  level: INFO
+  # level: WARN
+  # level: ERROR
+  logs:
+    gpio.one_wire: WARN
+    dallas.sensor: WARN
+    dallas_temp: WARN
+    mqtt.component: WARN
+    mqtt.client: WARN
+    gpio.component: WARN
+    component: WARN
+    sensor: WARN
+    text_sensor: WARN
+    climate: WARN
+    esp32_ble: WARN
+    switch: WARN
+
+
+api:
+  reboot_timeout: 0s
+  # reboot_timeout: 600s
+  password: !secret api_password
+  # encryption:
+  #   key: !secret api_encryption_key
+
+
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: !secret timezone
+    servers:
+      - ${ip_sntp}
+    on_time:
+      - seconds: /1
+        then:
+          script.execute: watchdog
+      - seconds: /300
+        then:
+          script.execute: status_log
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  domain: !secret domain
+  power_save_mode: light
+  output_power: 8.5dBm  # Default is 20.5dBm
+  # output_power: 20.5dBm  # Default is 20.5dBm
+  fast_connect: true
+  manual_ip:
+    static_ip: ${ip_address}
+    gateway: ${ip_gateway}
+    subnet: ${ip_subnet}
+    dns1: ${ip_dns1}
+  ap:
+    ssid: "${esphome_name} Fallback"
+    password: !secret fallback_ap_passwd
+
+
+captive_portal:
+
+
+esp32_ble_tracker:  ## Bluetooth Low Energy Devices
+  id: ble_scanner
+  scan_parameters:
+    # interval: 320ms ## Default
+    interval: 25000ms  # Reduce BLE scanning to every 2.5 seconds
+    # window: 50ms ## Default value
+    window: 80ms
+    active: false  # Passive scanning reduces CPU load
+    continuous: true
+
+
+one_wire: ## Dallas 1 wire temperature sensor (DS18S20)
+  platform: gpio
+  id: ds18s20
+  pin: ${gpio_dallas}
+
+
+i2c:
+  sda: ${gpio_i2c_sda}
+  scl: ${gpio_i2c_scl}
+  # frequency: 50kHz ## default
+  frequency: 200kHz
+
+
+output:
+  - platform: gpio
+    id: relay_ch
+    inverted: true
+    pin: ${gpio_relay_ch}
+
+  - platform: gpio
+    id: board_led
+    inverted: false
+    pin: ${gpio_led}
+
+  - platform: ledc
+    id: lcd_blight
+    inverted: false
+    pin: ${gpio_lcd_blight}
+    frequency: 1000 Hz
+
+
+climate: ## Thermostats
+  - platform: thermostat
+    name: "${esphome_name} ${ths0_name} Climate Controller"
+    sensor: ${ths0_sensor}
+    id: ths0
+    min_heating_off_time: 60s
+    min_heating_run_time: 60s
+    min_idle_time: 60s
+    heat_action:
+      - script.execute:
+          id: manage_heat_action
+          num: 0
+    idle_action:
+      - script.execute:
+          id: manage_idle_action
+          num: 0
+    target_temperature_change_action:
+      - lambda: |-
+          ESP_LOGI("main", "'${ths0_name} Climate Controller' target temperature changed to %s°C", String(id(ths0).target_temperature_low).c_str());
+    on_boot_restore_from: memory
+    default_preset: Home
+    preset:
+      - name: Away
+        default_target_temperature_low: ${preset_away_target_temperature} °C
+      - name: Sleep
+        default_target_temperature_low: ${preset_sleep_target_temperature} °C
+      - name: Activity
+        default_target_temperature_low: ${preset_activity_target_temperature} °C
+      - name: ECO
+        default_target_temperature_low: ${preset_eco_target_temperature} °C
+      - name: Home
+        default_target_temperature_low: ${preset_home_target_temperature} °C
+      - name: Comfort
+        default_target_temperature_low: ${preset_comfort_target_temperature} °C
+      - name: Cozy
+        default_target_temperature_low: ${preset_cozy_target_temperature} °C
+      - name: Warm
+        default_target_temperature_low: ${preset_warm_target_temperature} °C
+    visual:
+      min_temperature: ${min_temperature} °C
+      max_temperature: ${max_temperature} °C
+      temperature_step: ${temperature_step} °C
+    # The minimum temperature differential (temperature below the set point) before engaging heat
+    heat_deadband: 0.00
+    # The minimum temperature differential (heating beyond the set point) before disengaging heat 
+    heat_overrun: 0.10
+    # heat_overrun: ${temperature_hysteresis}
+
+  - platform: thermostat
+    name: "${esphome_name} ${ths1_name} Climate Controller"
+    sensor: ${ths1_sensor}
+    id: ths1
+    min_heating_off_time: 60s
+    min_heating_run_time: 60s
+    min_idle_time: 60s
+    heat_action:
+      - script.execute:
+          id: manage_heat_action
+          num: 1
+    idle_action:
+      - script.execute:
+          id: manage_idle_action
+          num: 1
+    target_temperature_change_action:
+      - lambda: |-
+          ESP_LOGI("main", "'${ths1_name} Climate Controller' target temperature changed to %s°C", String(id(ths1).target_temperature_low).c_str());
+    on_boot_restore_from: memory
+    default_preset: Home
+    preset:
+      - name: Away
+        default_target_temperature_low: ${preset_away_target_temperature} °C
+      - name: Sleep
+        default_target_temperature_low: ${preset_sleep_target_temperature} °C
+      - name: Activity
+        default_target_temperature_low: ${preset_activity_target_temperature} °C
+      - name: ECO
+        default_target_temperature_low: ${preset_eco_target_temperature} °C
+      - name: Home
+        default_target_temperature_low: ${preset_home_target_temperature} °C
+      - name: Comfort
+        default_target_temperature_low: ${preset_comfort_target_temperature} °C
+      - name: Cozy
+        default_target_temperature_low: ${preset_cozy_target_temperature} °C
+      - name: Warm
+        default_target_temperature_low: ${preset_warm_target_temperature} °C
+    visual:
+      min_temperature: ${min_temperature} °C
+      max_temperature: ${max_temperature} °C
+      temperature_step: ${temperature_step} °C
+    heat_deadband: 0.00
+    heat_overrun: ${temperature_hysteresis}
+
+  - platform: thermostat
+    name: "${esphome_name} ${ths2_name} Climate Controller"
+    sensor: ${ths2_sensor}
+    id: ths2
+    min_heating_off_time: 60s
+    min_heating_run_time: 60s
+    min_idle_time: 60s
+    heat_action:
+      - script.execute:
+          id: manage_heat_action
+          num: 2
+    idle_action:
+      - script.execute:
+          id: manage_idle_action
+          num: 2
+    target_temperature_change_action:
+      - lambda: |-
+          ESP_LOGI("main", "'${ths2_name} Climate Controller' target temperature changed to %s°C", String(id(ths1).target_temperature_low).c_str());
+    on_boot_restore_from: memory
+    default_preset: Home
+    preset:
+      - name: Away
+        default_target_temperature_low: ${preset_away_target_temperature} °C
+      - name: Sleep
+        default_target_temperature_low: ${preset_sleep_target_temperature} °C
+      - name: Activity
+        default_target_temperature_low: ${preset_activity_target_temperature} °C
+      - name: ECO
+        default_target_temperature_low: ${preset_eco_target_temperature} °C
+      - name: Home
+        default_target_temperature_low: ${preset_home_target_temperature} °C
+      - name: Comfort
+        default_target_temperature_low: ${preset_comfort_target_temperature} °C
+      - name: Cozy
+        default_target_temperature_low: ${preset_cozy_target_temperature} °C
+      - name: Warm
+        default_target_temperature_low: ${preset_warm_target_temperature} °C
+    visual:
+      min_temperature: ${min_temperature} °C
+      max_temperature: ${max_temperature} °C
+      temperature_step: ${temperature_step} °C
+    heat_deadband: 0.00
+    heat_overrun: ${temperature_hysteresis}
+
+
+switch:
+  - platform: template
+    id: ch_timer_switch
+    restore_mode: ALWAYS_OFF # Always initialize the switch as OFF on bootup.
+    inverted: false
+    name: "${esphome_name} CH Boost Timer"
+    lambda: |-
+        return (id(mode_timer));
+    turn_on_action:
+      - script.execute: manage_ch_timer
+    turn_off_action:
+      - script.execute: manage_ch_timer
+
+  - platform: output
+    id: relay_switch
+    restore_mode: ALWAYS_OFF
+    name: "${esphome_name} Output Relay"
+    output: relay_ch
+    inverted: false
+    internal: true
+
+  - platform: output
+    id: display_backlight
+    name: "${esphome_name} LCD Backlight"
+    output: lcd_blight
+    inverted: false
+
+  - platform: restart
+    restore_mode: ALWAYS_OFF
+    id: restart_sw
+    name: "${esphome_name} Restart"
+
+  - platform: shutdown
+    restore_mode: ALWAYS_OFF
+    id: syshalt_sw
+    name: "${esphome_name} Shutdown"
+
+text_sensor:
+  - platform: template
+    name: "${esphome_name} Reset Reason"
+    id: reset_reason_sensor
+    icon: mdi:power-plug-off-outline
+    update_interval: 120s
+    lambda: |-
+      std::string reason;
+      switch (esp_reset_reason()) {
+        case ESP_RST_POWERON: reason = "POWERON_RESET"; break;
+        case ESP_RST_EXT: reason = "EXT_RESET"; break;
+        case ESP_RST_SW: reason = "SW_RESET"; break;
+        case ESP_RST_PANIC: reason = "PANIC_RESET"; break;
+        case ESP_RST_INT_WDT: reason = "INT_WDT_RESET"; break;
+        case ESP_RST_TASK_WDT: reason = "TASK_WDT_RESET"; break;
+        case ESP_RST_WDT: reason = "WDT_RESET"; break;
+        case ESP_RST_DEEPSLEEP: reason = "DEEPSLEEP_RESET"; break;
+        case ESP_RST_BROWNOUT: reason = "BROWNOUT_RESET"; break;
+        case ESP_RST_SDIO: reason = "SDIO_RESET"; break;
+        default: reason = "UNKNOWN"; break;
+      }
+      return reason;
+    entity_category: "diagnostic"
+
+  # - platform: template
+  #   update_interval: 15s
+  #   id: esp_task_count_sensor
+  #   name: "${esphome_name} ESP Task Count"
+  #   lambda: |-
+  #     return std::to_string(uxTaskGetNumberOfTasks());
+  #   icon: mdi:cpu-32-bit
+  #   entity_category: "diagnostic"
+
+  # - platform: template
+  #   name: "${esphome_name} Free Heap"
+  #   update_interval: 5s
+  #   lambda: |-
+  #     int free_heap = esp_get_free_heap_size();
+  #     char buffer[20];
+  #     snprintf(buffer, sizeof(buffer), "%d bytes", free_heap);
+  #     return {buffer};
+  #   entity_category: "diagnostic"
+
+  - platform: template
+    name: "${esphome_name} Heap Load"
+    id: heap_load_sensor
+    update_interval: 5s
+    lambda: |-
+      int free_heap = esp_get_free_heap_size();
+      int min_free_heap = esp_get_minimum_free_heap_size();
+      int heap_used = free_heap - min_free_heap;
+      float load_percentage = (heap_used > 0) ? (100.0 * heap_used / free_heap) : 0;
+      char buffer[20];
+      snprintf(buffer, sizeof(buffer), "Load: %.1f%%", load_percentage);
+      return {buffer};
+    entity_category: "diagnostic"
+
+  - platform: version
+    id: esp_version_sensor
+    name: "${esphome_name} ESPHome Version"
+    hide_timestamp: true
+    entity_category: "diagnostic"
+
+  - platform: template
+    id: uptime_human
+    name: "${esphome_name} Uptime Sensor"
+    icon: mdi:clock-start
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  - platform: template
+    id: snmp_time_sensor
+    name: "${esphome_name} SNMP Time"
+    icon: mdi:clock
+    internal: true
+    update_interval: 1s
+    entity_category: "diagnostic"
+
+  - platform: template
+    id: timer_sensor
+    name: "${esphome_name} CH Boost Timer Countdown"
+    update_interval: 1s
+    icon: mdi:clock-start
+
+  - platform: wifi_info
+    ip_address:
+      name: "${esphome_name} IP Address"
+      id: my_ip_address
+      icon: mdi:ip
+
+  - platform: template
+    id: lcd_brightness
+    name: "${esphome_name} LCD Brightness"
+    icon: mdi:brightness-percent
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  ## Careful, creates memory issues
+  # - platform: homeassistant
+  #   id: lcd_backlight
+  #   entity_id: input_number.${esphome_name}_lcd_backlight
+  #   internal: true
+  #   on_value:
+  #     then:
+  #       - output.turn_on: lcd_blight
+  #       - output.set_level:
+  #           id: lcd_blight
+  #           level: !lambda |-
+  #             return atoi(id(lcd_backlight).state.c_str()) / 100.0;
+
+
+sensor:
+  - platform: internal_temperature
+    id: internal_temp_sensor
+    name: "${esphome_name} Internal Temperature"
+    entity_category: "diagnostic"
+
+  - platform: uptime
+    id: uptime_sensor
+    name: "${esphome_name} Uptime"
+    update_interval: 60s
+    internal: true
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            state: !lambda |-
+              int seconds = round(id(uptime_sensor).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? String(days) + "d " : "") +
+                (hours ? String(hours) + "h " : "") +
+                (minutes ? String(minutes) + "m " : "") +
+                (String(seconds) + "s")
+              ).c_str();
+
+  - platform: wifi_signal
+    id: wifi_signal_db
+    name: "${esphome_name} WiFi Signal"
+    icon: mdi:wifi
+    update_interval: 60s
+
+  - platform: copy
+    source_id: wifi_signal_db
+    name: "${esphome_name} WiFi Signal Percent"
+    id: wifi_signal_proc
+    icon: mdi:wifi
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "Signal %"
+    entity_category: "diagnostic"
+
+  - platform: dallas_temp
+    id: dallas_1wire
+    one_wire_id: ds18s20
+    name: "${esphome_name} Temperature Sensor"
+    address: ${dallas_1wire_sensor}
+    accuracy_decimals: 2
+    update_interval: 120s
+
+  - platform: rotary_encoder
+    id: r_encoder
+    name: "${esphome_name} Rotary Encoder"
+    pin_a: ${gpio_rotary_a}
+    pin_b: ${gpio_rotary_b}
+    publish_initial_value: true
+    restore_mode: ALWAYS_ZERO
+    resolution: 1
+    filters:
+        - heartbeat: 300ms
+        - debounce: 50ms
+    on_clockwise:
+      - lambda: |-
+          ESP_LOGD("main", "rotary_encoder Turned Clockwise");
+          id(menu_timeout) = 15;
+          if (!id(mode_menu)) {
+            id(mode_menu) = true;
+          } else {
+            id(my_lcd_menu).down();
+          }
+    on_anticlockwise:
+      - lambda: |-
+          ESP_LOGD("main", "rotary_encoder Turned Anti Clockwise");
+          id(menu_timeout) = 15;
+          if (!id(mode_menu)) {
+            id(mode_menu) = true;
+          } else {
+            id(my_lcd_menu).up();
+          }
+
+
+  ## BLE Sensors
+
+  # - platform: xiaomi_lywsd03mmc
+  #   mac_address: ${xiaomi_bt_1_mac_address}
+  #   bindkey: "05e04076be48f427f3d90e166d0fbd5e"
+  #   id: xiaomi_bt_1
+  #   temperature:
+  #     # name: "${xiaomi_bt_1_name} Temperature - ${esphome_name}"
+  #     name: "${esphome_name} Temperature Sensor"
+  #     id: xiaomi_bt_1_temperature
+  #     on_value:
+  #         then:
+  #           - lambda: |-
+  #               ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_1_name}' temperature updated to: %.2f°C", x);
+  #   humidity:
+  #     name: "${xiaomi_bt_1_name} Humidity - ${esphome_name}"
+  #     id: xiaomi_bt_1_humidity
+  #     on_value:
+  #         then:
+  #           - lambda: |-
+  #               ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_1_name}' humidity updated to: %.2f%", x);
+  #   battery_level:
+  #     name: "${xiaomi_bt_1_name} Battery Level - ${esphome_name}"
+  #     id: xiaomi_bt_1_battery
+  #     on_value:
+  #         then:
+  #           - lambda: |-
+  #               ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_1_name}' battery level updated to: %.2f%", x);
+  #     entity_category: "diagnostic"
+
+  - platform: xiaomi_lywsd03mmc
+    mac_address: ${xiaomi_bt_2_mac_address}
+    bindkey: "05e04076be48f427f3d90e166d0fbd5e"
+    id: xiaomi_bt_2
+    temperature:
+      name: "${xiaomi_bt_2_name} Temperature - ${esphome_name}"
+      id: xiaomi_bt_2_temperature
+      on_value:
+          then:
+            - lambda: |-
+                ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_2_name}' temperature updated to: %.2f°C", x);
+    humidity:
+      name: "${xiaomi_bt_2_name} Humidity - ${esphome_name}"
+      id: xiaomi_bt_2_humidity
+      on_value:
+          then:
+            - lambda: |-
+                ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_2_name}' humidity updated to: %.2f%", x);
+    battery_level:
+      name: "${xiaomi_bt_2_name} Battery Level - ${esphome_name}"
+      id: xiaomi_bt_2_battery
+      on_value:
+          then:
+            - lambda: |-
+                ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_2_name}' battery level updated to: %.2f%", x);
+      entity_category: "diagnostic"
+
+  - platform: xiaomi_lywsd03mmc
+    mac_address: ${xiaomi_bt_3_mac_address}
+    bindkey: "05e04076be48f427f3d90e166d0fbd5e"
+    id: xiaomi_bt_3
+    temperature:
+      name: "${xiaomi_bt_3_name} Temperature - ${esphome_name}"
+      id: xiaomi_bt_3_temperature
+      on_value:
+          then:
+            - lambda: |-
+                ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_3_name}' temperature updated to: %.2f°C", x);
+    humidity:
+      name: "${xiaomi_bt_3_name} Humidity - ${esphome_name}"
+      id: xiaomi_bt_3_humidity
+      on_value:
+          then:
+            - lambda: |-
+                ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_3_name}' humidity updated to: %.2f%", x);
+    battery_level:
+      name: "${xiaomi_bt_3_name} Battery Level - ${esphome_name}"
+      id: xiaomi_bt_3_battery
+      on_value:
+          then:
+            - lambda: |-
+                ESP_LOGI("BLE_UPDATE", "'${xiaomi_bt_3_name}' battery level updated to: %.2f%", x);
+      entity_category: "diagnostic"
+
+
+binary_sensor:
+  - platform: homeassistant
+    id: backlight_on
+    entity_id: input_boolean.lcd_backlight_on
+    internal: true
+
+  - platform: template
+    id: ch_output_sensor
+    name: "${esphome_name} CH output"
+    lambda: |-
+      if (id(relay_switch).state) {
+        return true;
+      } else {
+        return false;
+      }
+
+  - platform: gpio
+    name: "${esphome_name} Push SW"
+    id: push_sw1
+    pin: ${gpio_push_sw1}
+    internal: true
+    on_multi_click:
+    - timing:
+        - OFF for at most 0.3s
+        - ON for at least 0.4s
+      then:
+        - lambda: |-
+              if(!id(mode_menu)) {
+                id(simplepress).execute();
+              } else {
+                id(my_lcd_menu).enter();
+                ESP_LOGI("main", "my_lcd_menu.enter()");
+              }
+
+
+script:
+  - id: input_ack
+    mode: single
+    then:
+      - output.turn_off: board_led
+      - delay: 0.1s
+      - output.turn_on: board_led
+      - delay: 0.2s
+      - output.turn_off: board_led
+      - delay: 0.2s
+      - output.turn_on: board_led
+      - delay: 0.2s
+      - output.turn_off: board_led
+
+  - id: manage_heat_action
+    mode: single
+    parameters:
+      num: int
+    then:
+      - lambda: |-
+          String ths_name = id(ths_names)[num];
+          ESP_LOGI("main", "'%s Climate Controller' changed state to ON", ths_name);
+
+  - id: manage_idle_action
+    mode: single
+    parameters:
+      num: int
+    then:
+      - lambda: |-
+          String ths_name = id(ths_names)[num];
+          ESP_LOGI("main", "'%s Climate Controller' changed state to OFF", ths_name);
+
+  - id: manage_ch_timer
+    mode: single
+    then:
+      if:
+        condition:
+          and:
+            - switch.is_off: ch_timer_switch
+            - lambda: 'return id(after_boot);'
+        then:
+          - globals.set:
+              id: mode_timer
+              value: 'true'
+
+          - globals.set:
+              id: timer_timestamp
+              value: '3600'
+
+          - lambda: |-
+              id(timer_sensor).publish_state("00:00:01");
+              ESP_LOGI("main", "Starting CH boost timer");
+
+        else:
+          - lambda: |-
+              ESP_LOGI("main", "Ending CH boost timer");
+
+          - globals.set:
+              id: timer_timestamp
+              value: '0'
+
+          - globals.set:
+              id: mode_timer
+              value: 'false'
+
+  - id: simplepress
+    mode: single
+    then:
+      - lambda: |-
+          ESP_LOGD("main", "push_sw1 simple press");
+          if (id(mode_timer)) {
+            id(ch_timer_switch).turn_off();
+          } else {
+            id(ch_timer_switch).turn_on();
+          }
+          id(input_ack).execute();
+
+  - id: status_log
+    mode: single
+    then:
+      - lambda: |-
+          ESP_LOGI("main", "---MARK---\nUptime=%s,Timer=%s,TimerETA=%s,Output=%s",
+                      (id(uptime_human).state ).c_str(),
+                      String(id(mode_timer)).c_str(), 
+                      String(id(timer_timestamp)).c_str(), 
+                      String(id(relay_switch).state).c_str()
+                  );
+          auto climate_controllers = App.get_climates();
+          for(unsigned int i = 0; i < climate_controllers.size(); i++) {
+            ESP_LOGI("app", "Climate '%s' action: '%s', temperature: '%s', preset: '%s'", 
+            String(id(ths_names)[i]).c_str(), 
+            String(climate_controllers[i]->action).c_str(), 
+            String(climate_controllers[i]->current_temperature).c_str(), 
+            String(climate_controllers[i]->target_temperature_low).c_str() );
+          }
+          auto sensors = App.get_sensors();
+          for(unsigned int i = 0; i < sensors.size(); i++) {
+              ESP_LOGI("app", "Sensor '%s': %s", sensors[i]->get_name().c_str(), String(sensors[i]->state).c_str());
+          }
+
+  - id: watchdog
+    mode: single
+    then:
+      - lambda: |-
+          std::string brightness = to_string(id(lcd_ilum));
+          id(lcd_brightness).publish_state(brightness.c_str());
+
+          // Set output state (relay_switch)
+          if ( (id(after_boot)) && ( 
+               (id(cached_ths0_action) == 3) 
+            || (id(cached_ths1_action) == 3) 
+            || (id(cached_ths2_action) == 3) 
+            || (id(mode_timer)) ) ) {
+                  id(relay_switch).turn_on();
+                  if (id(timer_timestamp) % 2 != 0) {
+                      id(board_led).turn_off();
+                  } else {
+                      id(board_led).turn_on();
+                  }
+          } else {
+            id(relay_switch).turn_off();
+            id(board_led).turn_off();
+          }
+
+          // Precompute values
+          id(cached_ths0_temp) = id(ths0).current_temperature;
+          id(cached_ths0_target) = id(ths0).target_temperature;
+          id(cached_ths0_action) = ths0->action;
+
+          id(cached_ths1_temp) = id(ths1).current_temperature;
+          id(cached_ths1_target) = id(ths1).target_temperature_low;
+          id(cached_ths1_action) = ths1->action;
+
+          id(cached_ths2_temp) = id(ths2).current_temperature;
+          id(cached_ths2_target) = id(ths2).target_temperature_low;
+          id(cached_ths2_action) = ths2->action;
+
+          // Timedate for LCD display
+          struct tm *tmp; // time struct (calendar time)
+          char time_str[20];
+          auto current_time = id(sntp_time).now();
+          time_t timestamp = current_time.timestamp;  // Convert ESPTime to timestamp
+          struct tm *timeinfo = localtime(&timestamp);
+
+          if (timestamp % 2 == 0  &&  !(id(mode_timer)))  {
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H %M", timeinfo); // Format the time
+          } else {
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", timeinfo); // Format the time
+          }
+          id(snmp_time_sensor).publish_state(time_str);  // Publish the formatted time
+
+          // Countdown timer
+          char frm_tm[9];
+          if (id(mode_timer)) {
+            if (id(timer_timestamp) <= 0) {
+                id(mode_timer) = false;
+            } else {
+              id(timer_timestamp)--;
+              tmp = localtime(&id(timer_timestamp));
+              //Format tmp into a human-readable string based on a specified format
+              strftime(frm_tm, sizeof(frm_tm), "%H:%M:%S", tmp);
+              id(timer_sensor).publish_state((String(frm_tm)).c_str());
+            }
+          } else {
+            id(timer_timestamp) = 0;
+            id(timer_sensor).publish_state("00:00:00");
+          }
+          if (id(mode_menu)) {
+            id(menu_timeout)--;
+          }
+
+  - id: manage_thermostat_state
+    parameters:
+      thermostat: esphome::thermostat::ThermostatClimate*
+      num: int
+    mode: single
+    then:
+      - lambda: |-
+          std::string set_state = id(menu_select_sw).state.c_str();
+          String ths_name = id(ths_names)[num];
+          auto call = thermostat->make_call();
+          if (set_state == "Enable ") {
+              call.set_mode("HEAT");
+              call.perform();
+              ESP_LOGI("main", "Enabling '%s Climate Controller'", ths_name);
+          } else {
+              call.set_mode("OFF");
+              call.perform();
+              ESP_LOGI("main", "Disabling '%s Climate Controller'", ths_name);
+          }
+          id(input_ack).execute();
+
+  - id: apply_preset_temp
+    parameters:
+      thermostat: esphome::thermostat::ThermostatClimate*
+      num: int
+    mode: single
+    then:
+      - lambda: |-
+            std::string preset = id(climate_preset_select).state.c_str();
+            String ths_name = id(ths_names)[num];
+            if (preset == "Away") {
+              thermostat->target_temperature_low = ${preset_away_target_temperature};
+            } else if (preset == "Sleep") {
+              thermostat->target_temperature_low = ${preset_sleep_target_temperature};
+            } else if (preset == "19.50") {
+              thermostat->target_temperature_low = ${preset_activity_target_temperature};
+            } else if (preset == "20.00") {
+              thermostat->target_temperature_low = ${preset_eco_target_temperature};
+            } else if (preset == "20.50") {
+              thermostat->target_temperature_low = ${preset_home_target_temperature};
+            } else if (preset == "21.00") {
+              thermostat->target_temperature_low = ${preset_comfort_target_temperature};
+            } else if (preset == "21.50") {
+              thermostat->target_temperature_low = ${preset_cozy_target_temperature};
+            } else if (preset == "22.00") {
+              thermostat->target_temperature_low = ${preset_warm_target_temperature};
+            } else if (preset == "22.50") {
+              thermostat->target_temperature_low = 22.50;
+            } else if (preset == "23.00") {
+              thermostat->target_temperature_low = 23.00;
+            } 
+            id(input_ack).execute();
+            ESP_LOGI("main", "Preset temperature '%s' applied to to thermostat '%s'", preset.c_str(), ths_name);
+
+
+select: ## lcd_menu
+  - platform: template
+    id: climate_preset_select
+    optimistic: true
+    options:
+      - "Away"
+      - "Sleep"
+      - "19.50"
+      - "20.00"
+      - "20.50"
+      - "21.00"
+      - "21.50"
+      - "22.00"
+      - "22.50"
+      - "23.00"
+    initial_option: "20.50"
+
+  - platform: template ## Display toggle switch
+    id: menu_select_sw
+    optimistic: true
+    options:
+      - 'Enable '
+      - 'Disable'
+
+
+display: ## LCD display
+  - platform: lcd_pcf8574
+    id: lcd
+    dimensions: 16x2
+    address: 0x27
+    update_interval: 1s
+
+    lambda: |-
+      //fflush(stdout);       // Clear display
+      //it.print(0, 1, "1");  //Print char "1" to first row, second column.
+
+      if (id(loop_cnt) >= id(loop_cnt_max)) {
+        id(loop_cnt) = 0;
+      } else {
+        id(loop_cnt)++;
+      }
+      char spin = 0x20;
+      char anim[9] = {0x7C, 0x2F, 0x2D, 0x7C, 0x2F, 0x2D, 0x7C, 0x2F, 0x2D}; // |, /, -  
+      spin = anim[id(loop_cnt)];
+
+      int cached_ths_actions[3] = {
+        id(cached_ths0_action),
+        id(cached_ths1_action),
+        id(cached_ths2_action)
+      };
+      float cached_temps[3] = {
+        id(cached_ths0_temp),
+        id(cached_ths1_temp),
+        id(cached_ths2_temp)
+      };
+      float cached_target_temps[3] = {
+        id(cached_ths0_target),
+        id(cached_ths1_target),
+        id(cached_ths2_target)
+      };
+
+      if (!id(mode_menu)) {
+        if ( ((id(ths0).action == 3) || (id(ths1).action == 3) || (id(ths2).action == 3)) && !(id(mode_timer)) ) {
+            if (id(loop_cnt) < id(loop_cnt_cue)) {
+              auto climate_controllers = App.get_climates();
+              for(unsigned int i = 0; i < climate_controllers.size(); i++) {
+              for (int i = 0; i < 3; i++) {
+                if (cached_ths_actions[i] == 3) {  // Example condition for "heating" action
+                  it.printf(0, 0, "Heat: %s", id(ths_names)[i].c_str());  // Display thermostat name
+                  it.printf(0, 1, "%.2f%cC %c P:%.1f%", 
+                            cached_temps[i], 
+                            0xDF, 
+                            spin, 
+                            cached_target_temps[i]);
+                  break;
+                }
+              }
+            }
+          } else {
+            it.printf(0, 0, "%s", (id(snmp_time_sensor).state).c_str());
+            it.printf(0, 1, "%.2f%cC %c P:%.1f%", id(cached_ths0_temp), 0xDF, (id(cached_ths0_target) == 3 ? spin : 0x20), id(cached_ths0_target));
+         }
+        } else {
+          it.printf(0, 0, "%s", (id(snmp_time_sensor).state).c_str());
+          if (id(mode_timer)) {
+            it.printf(0, 1, "%.2f%cC %s", id(cached_ths0_temp), 0xDF, (id(timer_sensor).state).c_str());
+          } else {
+            it.printf(0, 1, "%.2f%cC %c P:%.1f%", id(cached_ths0_temp), 0xDF, 0x20, id(cached_ths0_target));
+          }
+        }
+      } else {
+        if (id(menu_timeout) <= 0) {
+          id(mode_menu) = false;
+        } else {
+          id(my_lcd_menu).draw();
+        }
+      }
+
+
+lcd_menu:
+  id: my_lcd_menu
+  display_id: lcd
+  active: true
+  mode: rotary
+  items:
+    - type: command
+      text: 'Hide Menu'
+      on_value:
+        then:
+          - lambda: 'id(mode_menu) = false;'
+
+    - type: menu
+      text: 'Thermostats'
+      items:
+        - type: back
+          text: '...'
+
+        - type: menu  # Thermostat ths0 menu
+          text: "${ths0_name}"
+          on_enter:
+            then:
+              - lambda:  |-
+                      ESP_LOGD("\"${ths0_name}\" display_menu root", "enter: %s, %s", it->get_text().c_str(), it->get_value_text().c_str());
+                      // Set  menu_select_sw state to match the thermostat state
+                      if (id(ths0).mode == climate::CLIMATE_MODE_OFF) {
+                          id(menu_select_sw).publish_state("Disable");
+                      } else {
+                          id(menu_select_sw).publish_state("Enable ");
+                      }
+                      // Publish the current target_temperature_low to the climate_preset_select
+                      char buffer[6];
+                      snprintf(buffer, sizeof(buffer), "%.2f", id(ths0).target_temperature_low);
+                      id(climate_preset_select).publish_state(buffer);
+          items:
+            - type: back
+              text: '...'
+
+            - type: label
+              text:
+                !lambda |-
+                char buffer[20];
+                snprintf(buffer, sizeof(buffer), "Temp.  %.2f%cC", id(cached_ths0_temp), 0xDF);
+                return std::string(buffer);
+
+            - type: label
+              text:
+                !lambda |-
+                  char buffer[20];
+                  snprintf(buffer, sizeof(buffer), "Preset %.2f%cC", id(ths0).target_temperature_low, 0xDF);
+                  return std::string(buffer);
+
+            - type: select
+              text: !lambda |-
+                char buffer[7];
+                snprintf(buffer, sizeof(buffer), "Set %cC", 0xDF);  // 0xDF for degree symbol
+                return std::string(buffer);
+              select: climate_preset_select
+              on_leave:
+                then:
+                  - script.execute:
+                      id: apply_preset_temp
+                      thermostat: !lambda 'return id(ths0);'
+                      num: 0
+
+            - type: select
+              immediate_edit: False
+              text: 'Mode'
+              select: menu_select_sw
+              on_leave:
+                then:
+                  - script.execute:
+                      id: manage_thermostat_state
+                      thermostat: !lambda 'return id(ths0);'
+                      num: 0
+
+        - type: menu  # Thermostat ths1 menu
+          text: "${ths1_name}"
+          on_enter:
+            then:
+              - lambda:  |-
+                      ESP_LOGD("\"${ths1_name}\" display_menu root", "enter: %s, %s", it->get_text().c_str(), it->get_value_text().c_str());
+                      if (id(ths1).mode == climate::CLIMATE_MODE_OFF) {
+                          id(menu_select_sw).publish_state("Disable");
+                      } else {
+                          id(menu_select_sw).publish_state("Enable ");
+                      }
+                      char buffer[6];
+                      snprintf(buffer, sizeof(buffer), "%.2f", id(ths1).target_temperature_low);
+                      id(climate_preset_select).publish_state(buffer);
+          items:
+            - type: back
+              text: '...'
+
+            - type: label
+              text:
+                !lambda |-
+                char buffer[20];
+                snprintf(buffer, sizeof(buffer), "Temp.  %.2f%cC", id(cached_ths1_temp), 0xDF);
+                return std::string(buffer);
+
+            - type: label
+              text:
+                !lambda |-
+                  char buffer[20];
+                  snprintf(buffer, sizeof(buffer), "Preset %.2f%cC", id(ths1).target_temperature_low, 0xDF);
+                  return std::string(buffer);
+
+            - type: select
+              text: !lambda |-
+                char buffer[7];
+                snprintf(buffer, sizeof(buffer), "Set %cC", 0xDF);  // 0xDF for degree symbol
+                return std::string(buffer);
+              select: climate_preset_select
+              on_leave:
+                then:
+                  - script.execute:
+                      id: apply_preset_temp
+                      thermostat: !lambda 'return id(ths1);'
+                      num: 1
+
+            - type: select
+              immediate_edit: False
+              text: 'Mode'
+              select: menu_select_sw
+              on_leave:
+                then:
+                  - script.execute:
+                      id: manage_thermostat_state
+                      thermostat: !lambda 'return id(ths1);'
+                      num: 1
+
+        - type: menu # Thermostat ths2 menu
+          text: "${ths2_name}"
+          on_enter:
+            then:
+              - lambda:  |-
+                      ESP_LOGD("\"${ths2_name}\" display_menu root", "enter: %s, %s", it->get_text().c_str(), it->get_value_text().c_str());
+                      if (id(ths2).mode == climate::CLIMATE_MODE_OFF) {
+                          id(menu_select_sw).publish_state("Disable");
+                      } else {
+                          id(menu_select_sw).publish_state("Enable ");
+                      }
+                      char buffer[6];
+                      snprintf(buffer, sizeof(buffer), "%.2f", id(ths2).target_temperature_low);
+                      id(climate_preset_select).publish_state(buffer);
+          items:
+            - type: back
+              text: '...'
+
+            - type: label
+              text:
+                !lambda |-
+                char buffer[20];
+                snprintf(buffer, sizeof(buffer), "Temp.  %.2f%cC", id(cached_ths2_temp), 0xDF);
+                return std::string(buffer);
+
+            - type: label
+              text:
+                !lambda |-
+                  char buffer[20];
+                  snprintf(buffer, sizeof(buffer), "Preset %.2f%cC", id(ths2).target_temperature_low, 0xDF);
+                  return std::string(buffer);
+
+            - type: select
+              text: !lambda |-
+                char buffer[7];
+                snprintf(buffer, sizeof(buffer), "Set %cC", 0xDF);  // 0xDF for degree symbol
+                return std::string(buffer);
+              select: climate_preset_select
+              on_leave:
+                then:
+                  - script.execute:
+                      id: apply_preset_temp
+                      thermostat: !lambda 'return id(ths2);'
+                      num: 2
+
+            - type: select
+              immediate_edit: False
+              text: 'Mode'
+              select: menu_select_sw
+              on_leave:
+                then:
+                  - script.execute:
+                      id: manage_thermostat_state
+                      thermostat: !lambda 'return id(ths2);'
+                      num: 2
+
+    - type: switch
+      immediate_edit: true
+      text: 'CH Timer'
+      switch: ch_timer_switch
+
+    - type: switch
+      immediate_edit: true
+      text: 'LCD Light'
+      switch: display_backlight
+
+    - type: custom
+      immediate_edit: false
+      text: 'LCDBright'
+      value_lambda:
+          std::string k = to_string(id(lcd_ilum));
+          return k;
+      on_next:
+        then:
+          lambda:
+              if (id(lcd_ilum) < 100) {
+                id(lcd_ilum) = id(lcd_ilum) + 5;
+                id(lcd_blight).set_level(id(lcd_ilum) / 100.0);
+              }
+      on_prev:
+        then:
+          lambda:
+              if (id(lcd_ilum) > 0) {
+                id(lcd_ilum) = id(lcd_ilum) - 5;
+                id(lcd_blight).set_level(id(lcd_ilum) / 100.0);
+              }
+      on_leave:
+        then:
+          - lambda:
+              id(lcd_blight).set_level(id(lcd_ilum) / 100.0);
+              id(input_ack).execute();
+
+    - type: menu
+      text: 'System Info'
+      items:
+        - type: back
+          text: '...'
+
+        - type: label
+          text:
+            !lambda |-
+              std::string up = id(uptime_human).state.c_str();
+              return ("Uptime " + up);
+
+        - type: label
+          text:
+            !lambda |-
+              std::string sg = String(id(wifi_signal_proc).state).c_str();
+              return ("WiFi sg " + sg + "%");
+
+        # - type: label
+        #   text:
+        #     !lambda |-
+        #       std::string sg = String(id(wifi_signal_db).state).c_str();
+        #       return ("WiFi dBm " + sg);
+
+        # - type: label
+        #   text:
+        #     !lambda |-
+        #       char buffer[16];
+        #       snprintf(buffer, sizeof(buffer), "CPU T: %.2f%cC", id(internal_temp_sensor).state, 0xDF);
+        #       return std::string(buffer);
+
+        # - type: label
+        #   text:
+        #     !lambda |-
+        #       std::string ip = id(my_ip_address).state.c_str();
+        #       return ("IP " + ip);
+
+        # - type: label
+        #   text:
+        #     !lambda |-
+        #       std::string sg = id(esp_version_sensor).state.c_str();
+        #       return ("ESP v" + sg);
+
+        - type: label
+          text:
+            !lambda |-
+              std::string sg = id(heap_load_sensor).state.c_str();
+              size_t colon_pos = sg.find(":");
+              if (colon_pos != std::string::npos) {
+                sg = sg.substr(colon_pos + 2);
+              }
+              return "HeapLoad " + sg;
+
+    # - type: menu
+    #   text: 'Humidity'
+    #   items:
+    #     - type: back
+    #       text: '...'
+
+    #     - type: label
+    #       text:
+    #         !lambda |-
+    #           std::string tmpr = String(id(xiaomi_bt_2_humidity).state).c_str();
+    #           std::string name = "${xiaomi_bt_2_name}";
+    #           name.resize(9,' ');
+    #           return (name + ":" + tmpr);
+
+    #     - type: label
+    #       text:
+    #         !lambda |-
+    #           std::string tmpr = String(id(xiaomi_bt_3_humidity).state).c_str();
+    #           std::string name = "${xiaomi_bt_3_name}";
+    #           name.resize(9,' ');
+    #           return (name + ":" + tmpr);
+
+    # - type: menu
+    #   text: 'SensorBattery'
+    #   items:
+    #     - type: back
+    #       text: '...'
+
+    #     - type: label
+    #       text:
+    #         !lambda |-
+    #           std::string tmpr = String(id(xiaomi_bt_3_battery).state).c_str();
+    #           std::string name = "${xiaomi_bt_3_name}";
+    #           name.resize(9,' ');
+    #           return (name + ":" + tmpr);
+
+    #     - type: label
+    #       text:
+    #         !lambda |-
+    #           std::string tmpr = String(id(xiaomi_bt_3_battery).state).c_str();
+    #           std::string name = "${xiaomi_bt_3_name}";
+    #           name.resize(9,' ');
+    #           return (name + ":" + tmpr);
+
+    - type: switch
+      immediate_edit: false
+      text: 'Reboot'
+      switch: restart_sw
+
+    # - type: switch
+    #   immediate_edit: false
+    #   text: 'Halt'
+    #   switch: syshalt_sw
