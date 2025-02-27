@@ -1,14 +1,13 @@
-# ~ dexterke@secretlab © 2022-2025
+# ~ dexterke@secretlab © 2021-2025
 
 substitutions:
   esphome_name: esp32dev
 
   ## Zone names
+  xiaomi_bt_1_name: Test Lab
   # xiaomi_bt_1_name: Living Room
   xiaomi_bt_2_name: Kitchen
   xiaomi_bt_3_name: Entry Hall
-  # xiaomi_bt_4_name: 1st Floor
-  # xiaomi_bt_5_name: Backyard
 
   ## Thermostat sensors
   ths0_sensor: dallas_1wire
@@ -16,14 +15,15 @@ substitutions:
   ths1_sensor: xiaomi_bt_2_temperature
   ths2_sensor: xiaomi_bt_3_temperature
   
+  ## esp32dev
   dallas_1wire_sensor: !secret esp32dev_dallas_1wire_sensor
-  xiaomi_bt_1_mac_address: !secret esp32dev_xiaomi_bt_1_mac
-  xiaomi_bt_2_mac_address: !secret esp32dev_xiaomi_bt_2_mac
-  xiaomi_bt_3_mac_address: !secret esp32dev_xiaomi_bt_3_mac
+  xiaomi_bt_1_mac_address: !secret esp32dev_xiaomi_bt_1_mac_address
+  xiaomi_bt_2_mac_address: !secret esp32dev_xiaomi_bt_2_mac_address
+  xiaomi_bt_3_mac_address: !secret esp32dev_xiaomi_bt_3_mac_address
 
   ## Thermostat names
-  ths0_name: "Test Lab"
-  # ths0_name: ${xiaomi_bt_1_name}
+  # ths0_name: "1st Floor"
+  ths0_name: ${xiaomi_bt_1_name}
   ths1_name: ${xiaomi_bt_2_name}
   ths2_name: ${xiaomi_bt_3_name}
 
@@ -194,14 +194,14 @@ esphome:
 
 logger:
   # level: DEBUG
-  # level: VERBOSE
-  level: INFO
+  level: VERBOSE
+  # level: INFO
   # level: WARN
   # level: ERROR
   logs:
     gpio.one_wire: WARN
     dallas.sensor: WARN
-    dallas_temp: WARN
+    dallas.temp: WARN
     mqtt.component: WARN
     mqtt.client: WARN
     gpio.component: WARN
@@ -210,7 +210,10 @@ logger:
     text_sensor: WARN
     climate: WARN
     esp32_ble: WARN
+    xiaomi_ble: WARN
+    internal_temperature: WARN
     switch: WARN
+    esp32.preferences: WARN
 
 
 api:
@@ -348,8 +351,8 @@ climate: ## Thermostats
     # The minimum temperature differential (temperature below the set point) before engaging heat
     heat_deadband: 0.00
     # The minimum temperature differential (heating beyond the set point) before disengaging heat 
-    heat_overrun: 0.10
-    # heat_overrun: ${temperature_hysteresis}
+    heat_overrun: ${temperature_hysteresis}
+    # heat_overrun: 0.10
 
   - platform: thermostat
     name: "${esphome_name} ${ths1_name} Climate Controller"
@@ -393,7 +396,8 @@ climate: ## Thermostats
       max_temperature: ${max_temperature} °C
       temperature_step: ${temperature_step} °C
     heat_deadband: 0.00
-    heat_overrun: ${temperature_hysteresis}
+    # heat_overrun: ${temperature_hysteresis}
+    heat_overrun: 0.10
 
   - platform: thermostat
     name: "${esphome_name} ${ths2_name} Climate Controller"
@@ -438,6 +442,7 @@ climate: ## Thermostats
       temperature_step: ${temperature_step} °C
     heat_deadband: 0.00
     heat_overrun: ${temperature_hysteresis}
+    # heat_overrun: 0.10
 
 
 switch:
@@ -874,7 +879,7 @@ script:
     mode: single
     then:
       - lambda: |-
-          ESP_LOGI("main", "---MARK---\nUptime=%s,Timer=%s,TimerETA=%s,Output=%s",
+          ESP_LOGV("main", "---MARK---\nUptime=%s,Timer=%s,TimerETA=%s,Output=%s",
                       (id(uptime_human).state ).c_str(),
                       String(id(mode_timer)).c_str(), 
                       String(id(timer_timestamp)).c_str(), 
@@ -882,7 +887,7 @@ script:
                   );
           auto climate_controllers = App.get_climates();
           for(unsigned int i = 0; i < climate_controllers.size(); i++) {
-            ESP_LOGI("app", "Climate '%s' action: '%s', temperature: '%s', preset: '%s'", 
+            ESP_LOGV("app", "Climate '%s' action: '%s', temperature: '%s', preset: '%s'", 
             String(id(ths_names)[i]).c_str(), 
             String(climate_controllers[i]->action).c_str(), 
             String(climate_controllers[i]->current_temperature).c_str(), 
@@ -890,7 +895,7 @@ script:
           }
           auto sensors = App.get_sensors();
           for(unsigned int i = 0; i < sensors.size(); i++) {
-              ESP_LOGI("app", "Sensor '%s': %s", sensors[i]->get_name().c_str(), String(sensors[i]->state).c_str());
+              ESP_LOGV("app", "Sensor '%s': %s", sensors[i]->get_name().c_str(), String(sensors[i]->state).c_str());
           }
 
   - id: watchdog
